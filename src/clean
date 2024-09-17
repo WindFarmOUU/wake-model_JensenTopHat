@@ -20,3 +20,9 @@ rm LHS_*
 rm S4
 rm approximated.dat
 rm *.tmp
+rm *.html
+rm dakotageneral.in.low
+rm dakotageneral.in.high
+rm dakotageneralPy.in.low
+rm dakotageneralPy.in.high
+

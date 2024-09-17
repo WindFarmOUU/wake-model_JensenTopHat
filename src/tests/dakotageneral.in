@@ -10,10 +10,6 @@ quadrature_order  5
 #    collocation_ratio 1
     normalized
     output verbose
-    import_approx_points_file = 'approximate_at.dat'
-        annotated
-    export_approx_points_file = 'approximated.dat'
-        annotated
 
 model
     single

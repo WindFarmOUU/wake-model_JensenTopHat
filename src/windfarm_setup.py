@@ -1,10 +1,38 @@
 import numpy as np
 # import matplotlib.pyplot as plt
+from functools import wraps
 import chaospy as cp
 from getSamplePoints import getSamplePoints
 from dakotaInterface import updateDakotaFile
 
 
+def make_hashable(method_dict, n):
+    """Create a key of hashable types"""
+    m = method_dict
+    # key = (n, m['layout'], m['Noffset'], m['offset'], m['analytic_gradient'], m['uncertain_var'],
+    #        m['gradient'], m['distribution'], m['method'], m['wake_model'])  # The wake model returns a list for multifidelity
+    key = (n, m['layout'], m['Noffset'], m['offset'], m['analytic_gradient'], m['uncertain_var'],
+           m['gradient'], m['distribution'], m['method'])  # Remove the wake model
+    return key
+
+
+def memoize(function):
+    cache = {}
+
+    @wraps(function)  # Preserves the metadata of the wrapped function
+    def wrapper(method_dict, n):
+        key = make_hashable(method_dict, n)
+        if key in cache:
+            print "Returning cached points"
+            return cache[key]
+        else:
+            rv = function(method_dict, n)
+            cache[key] = rv
+            return rv
+    return wrapper
+
+
+@memoize
 def getPoints(method_dict, n):
 
     if method_dict['uncertain_var'] == 'direction':
@@ -44,11 +72,11 @@ def getPointsDirectionSpeed(dist, method_dict, n):
         wind_dir = []
         wind_spd = []
         weights = []
-        for i in range(winddirections.size):
-            for j in range(windspeeds.size):
-                wind_dir.append(winddirections[i])
-                wind_spd.append(windspeeds[j])
-                weights.append(weights_dir[i]*weights_speed[j])
+        for i in range(windspeeds.size):
+            for j in range(winddirections.size):
+                wind_dir.append(winddirections[j])
+                wind_spd.append(windspeeds[i])
+                weights.append(weights_dir[j]*weights_speed[i])
 
         winddirections = np.array(wind_dir)
         windspeeds = np.array(wind_spd)
@@ -87,9 +115,9 @@ def getPointsDirectionSpeed(dist, method_dict, n):
             C = (C + offset) % r
             x_d, f_d = generate_direction_abscissas_ordinates(a_d, A, B, C, r, R, dist_dir)
 
-        if dist_dir._str() == 'Amalia windrose raw':
+        if dist_dir._str() == 'Amalia windrose raw' or dist_dir._str() == 'Uniform(0.0, 360.0)':
 
-            C = 225  # Location of max probability or desired starting location.
+            C = 0  # 225  # Location of max probability or desired starting location.
             R = b_d-a_d  # range 360
 
             # Modify with offset, manually choose the offset you want
@@ -132,7 +160,7 @@ def getPointsDirectionSpeed(dist, method_dict, n):
             x_d = R*x_d/2. + R/2. + a_d  # R = 330
             # Call modify x with the new x.
             x_d = modifyx(x_d, A, B, C, r)
-        if dist_dir._str() == 'Amalia windrose raw':
+        if dist_dir._str() == 'Amalia windrose raw' or dist_dir._str() == 'Uniform(0.0, 360.0)':
             # Rescale x
             x_d = R*x_d/2. + R/2. + a_d  # R = 360
             # Call modify x with the new x.
@@ -193,7 +221,8 @@ def getPointsModifiedAmaliaDistribution(dist, method_dict, n):
         # Modify x, to start from the max probability location
         x = modifyx(x, A, B, C, r)
         # Get the weights associated with the points locations
-        w = getWeights(x, dx, dist)
+        # w = getWeights(x, dx, dist)
+        w = getWeightsModifiedAmalia(x, dx, dist)
 
     if method == 'dakota':
 
@@ -220,7 +249,7 @@ def getPointsModifiedAmaliaDistribution(dist, method_dict, n):
     return x, w
 
 
-def getPointsRawAmaliaDistribution(dist, method_dict, n):
+def getPointsUnmodifiedDistribution(dist, method_dict, n):
 
     method = method_dict['method']
     bnd = dist.range()
@@ -229,7 +258,7 @@ def getPointsRawAmaliaDistribution(dist, method_dict, n):
     a = a[0]  # get rid of the list
     b = b[0]  # get rid of the list
 
-    C = 225  # Location of max probability or desired starting location.
+    C = 0  # 225  # Location of max probability or desired starting location.
     R = b-a  # range 360
 
     # Modify with offset, manually choose the offset you want
@@ -260,7 +289,6 @@ def getPointsRawAmaliaDistribution(dist, method_dict, n):
 
         # Modify the mid to start from the max probability location
         ynew = (mid+C) % R
-
         f = dist.pdf(ynew)
 
         # Modify y to -1 to 1 range, I think makes dakota generation of polynomials easier
@@ -284,12 +312,13 @@ def getPointsRawAmaliaDistribution(dist, method_dict, n):
 
     return x, w
 
+
 def getPointsDirection(dist, method_dict, n):
 
     if dist._str() == 'Amalia windrose':
         x, w = getPointsModifiedAmaliaDistribution(dist, method_dict, n)
-    if dist._str() == 'Amalia windrose raw':
-        x, w = getPointsRawAmaliaDistribution(dist, method_dict, n)
+    if dist._str() == 'Amalia windrose raw' or dist._str() == 'Uniform(0.0, 360.0)':
+        x, w = getPointsUnmodifiedDistribution(dist, method_dict, n)
 
     return x, w
 
@@ -382,6 +411,7 @@ def modifyx(x, A=110, B=140, C=225, r=360):
                 if xi < C:
                     xi = (xi + B-A) % r
             y.append(xi)
+
     return np.array(y)
 
 
@@ -391,17 +421,63 @@ def getWeights(x, dx, dist):
     for xi in x:
         xleft = xi-dx/2.
         xright = xi+dx/2.
-        if xright > 360.0:
+
+        if xright >= 360.0:  # The equal because the pdf for the raw distribution doesn't integrate exactly to 1 in the cdf.
             w.append(1 - dist._cdf(xleft) + dist._cdf(xright-360))
         elif xleft < 0.0:
             w.append(dist._cdf(xright) + (1 - dist._cdf(360+xleft)))
         else:
             w.append(dist._cdf(xright) - dist._cdf(xleft))
-        # print xi+dx/2., xi-dx/2.
+
     w = np.array(w).flatten()
     # print w  # all weights should be positive
-    # print np.sum(w)   # this should sum to 1
+    # print 'the sum', np.sum(w)
+    np.testing.assert_almost_equal(np.sum(w), 1.0, decimal=12, err_msg='the weights should add to 1.')
     return w
+
+
+def getWeightsModifiedAmalia(x, dx, dist):
+    # Logic to get the weights from integrating the pdf between the bins
+
+    w = []
+
+    if len(x) == 1:  # Avoids having to do the logic when there is only one point.
+        w.append(1)
+    else:
+        counter = 0
+        for xi in x:
+            xleft = xi-dx/2.
+            xright = xi+dx/2.
+
+            if counter == 0:
+                xleft_first = xleft
+            if counter+1 == len(x) and not np.isclose(xleft_first%360, xright%360, rtol=0.0, atol=1e-12):  # I think mostly the case when len(x) = 2
+                if xright < xleft_first:
+                    xright = xleft_first
+                if xright > xleft_first:
+                    xright = 360+xleft_first
+
+            # This logic is to make sure that the weights add up to 1, because of the skipping over the zero probability region.
+            # if counter > 0 and (xleft%360) != (xright_old%360):  # Doesn't work properly because of rounding errors.
+            if counter > 0 and not np.isclose(xleft%360, xright_old%360, rtol=0.0, atol=1e-12):
+                xleft = xright_old%360
+
+            if xright >= 360.0:  # The equal because the pdf for the modified amalia distribution doesn't integrate exactly to 1 ind the cdf.
+                w.append(1 - dist._cdf(xleft) + dist._cdf(xright-360))
+            elif xleft < 0.0:
+                w.append(dist._cdf(xright) + (1 - dist._cdf(360+xleft)))
+            else:
+                w.append(dist._cdf(xright) - dist._cdf(xleft))
+
+            xright_old = xright
+            counter += 1
+
+    w = np.array(w).flatten()
+    # print w  # all weights should be positive
+    # print 'the sum', np.sum(w)
+    np.testing.assert_almost_equal(np.sum(w), 1.0, decimal=12, err_msg='the weights should add to 1.')
+    return w
+
 
 def getLayout(layout='grid'):
     ### Set up the farm ###
@@ -446,35 +522,71 @@ def getLayout(layout='grid'):
         # Amalia optimized
         # locations = np.genfromtxt('../WindFarms/AmaliaOptimizedXY.txt', delimiter=' ') # Amalia optimized Jared
         locations = np.genfromtxt('../WindFarms/layout_optimized.txt', delimiter=' ')
-        turbineX = locations[:,0]
-        turbineY = locations[:,1]
+        turbineX = locations[:, 0]
+        turbineY = locations[:, 1]
 
     elif layout == 'layout1':
 
         # Amalia optimized
         # locations = np.genfromtxt('../WindFarms/AmaliaOptimizedXY.txt', delimiter=' ') # Amalia optimized Jared
         locations = np.genfromtxt('../WindFarms/layout_1.txt', delimiter=' ')
-        turbineX = locations[:,0]
-        turbineY = locations[:,1]
+        turbineX = locations[:, 0]
+        turbineY = locations[:, 1]
 
     elif layout == 'layout2':
 
         # Amalia optimized
         # locations = np.genfromtxt('../WindFarms/AmaliaOptimizedXY.txt', delimiter=' ') # Amalia optimized Jared
         locations = np.genfromtxt('../WindFarms/layout_2.txt', delimiter=' ')
-        turbineX = locations[:,0]
-        turbineY = locations[:,1]
+        turbineX = locations[:, 0]
+        turbineY = locations[:, 1]
 
     elif layout == 'layout3':
 
         # Amalia optimized
         # locations = np.genfromtxt('../WindFarms/AmaliaOptimizedXY.txt', delimiter=' ') # Amalia optimized Jared
         locations = np.genfromtxt('../WindFarms/layout_3.txt', delimiter=' ')
-        turbineX = locations[:,0]
-        turbineY = locations[:,1]
+        turbineX = locations[:, 0]
+        turbineY = locations[:, 1]
+
+    elif layout == 'amalia_sub1':
+        # A sub part of the amalia layout
+        locations = np.genfromtxt('../WindFarms/layout_amalia_sub1.txt', delimiter=' ')
+        turbineX = locations[:, 0]
+        turbineY = locations[:, 1]
+
+    elif layout == 'amalia_sub2':
+        # A sub part of the amalia layout
+        locations = np.genfromtxt('../WindFarms/layout_amalia_sub2.txt', delimiter=' ')
+        turbineX = locations[:, 0]
+        turbineY = locations[:, 1]
+
+    elif layout == 'amalia_sub3':
+        # A sub part of the amalia layout
+        locations = np.genfromtxt('../WindFarms/layout_amalia_sub3.txt', delimiter=' ')
+        turbineX = locations[:, 0]
+        turbineY = locations[:, 1]
+
+    elif layout == 'amalia_sub4':
+        # A sub part of the amalia layout
+        locations = np.genfromtxt('../WindFarms/layout_amalia_sub4.txt', delimiter=' ')
+        turbineX = locations[:, 0]
+        turbineY = locations[:, 1]
+
+    elif layout == 'amalia_sub5':
+        # A sub part of the amalia layout
+        locations = np.genfromtxt('../WindFarms/layout_amalia_sub5.txt', delimiter=' ')
+        turbineX = locations[:, 0]
+        turbineY = locations[:, 1]
+
+    elif layout == 'local':
+        # A layout in your local directory
+        locations = np.genfromtxt('layout_local.txt', delimiter=' ')
+        turbineX = locations[:, 0]
+        turbineY = locations[:, 1]
 
     else:
-        raise ValueError('unknown layout option "%s", \nvalid options ["amalia", "optimized", "random", "test", "grid", "layout1", "layout2", "layout3"]' %layout)
+        raise ValueError('unknown layout option "%s", \nvalid options ["amalia", "optimized", "random", "test", "grid", "layout1", "layout2", "layout3", "amalia_sub1", "amalia_sub2", "amalia_sub3", "amalia_sub4", "amalia_sub5", "local"]' %layout)
 
     # plt.figure()
     # plt.scatter(turbineX, turbineY)

@@ -50,9 +50,9 @@ def merge_simple_record(args):
     c = {}
     assert a.keys() == b.keys(), 'The json files should have the same entries'
     for k in a:
+        # The logic is for the not verbose case
         # For these keys combine the entries
-        # If you didn't run verbose, this doesn't combine properly for the winddirections, windspeeds, power and power_approx
-        if k in ['std', 'samples', 'mean', 'winddirections', 'windspeeds', 'power', 'power_approx']:
+        if k in ['std', 'samples', 'mean']:
             c[k] = a[k] + b[k]
             # Remove duplicates and preserve order
             # Can't use the above solution because for the power_approx I have a list of lists.
@@ -63,9 +63,13 @@ def merge_simple_record(args):
             c[k] = d
             
         # For these keys make sure they are the same
-        if k in ['layout', 'uncertain_variable', 'method', 'Noffset', 'offset', 'windspeeds_approx', 'winddirections_approx']:
+        if k in ['layout', 'wake_model', 'uncertain_variable', 'method', 'Noffset', 'offset']:
             assert a[k] == b[k], 'These entries should be the same'
             c[k] = a[k]
+
+        # For these keys keep the results from the second json file
+        if k in ['power_approx', 'windspeeds_approx', 'winddirections_approx', 'power', 'windspeeds', 'winddirections']:
+            c[k] = b[k]
 
     jsonfileout = 'record_merged.json'
     jsonfile = open(jsonfileout, 'w')

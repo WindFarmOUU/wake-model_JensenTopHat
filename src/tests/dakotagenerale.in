@@ -11,10 +11,6 @@ expansion_order  4
     seed 15347  # Has the added seed for the test
     normalized
     output verbose
-    import_approx_points_file = 'approximate_at.dat'
-        annotated
-    export_approx_points_file = 'approximated.dat'
-        annotated
 
 model
     single

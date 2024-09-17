@@ -65,8 +65,9 @@ def getSamplePoints(dakotaFile):
         for line in f:
             w.append(float(line.split()[1]))
 
-        w = np.array(w)
         f.close()
+        w = np.array(w)
+        np.testing.assert_almost_equal(np.sum(w), 1.0, decimal=8, err_msg='the weights should add to 1.')
     else:
         w = np.array(None)  # The array is necessary because of OpenMDAO
 

@@ -98,6 +98,7 @@ class amaliaWindRoseRaw(object):
         self.lo = 0.0
         self.hi = 360.0
         self.inputfile = '../WindRoses/windrose_amalia_8ms.txt'
+        # self.inputfile = '/Users/Santi/gitSoftware/windfarm-ouu/WindRoses/windrose_amalia_8ms.txt'
 
     def _wind_rose_func(self):
         wind_data = np.loadtxt(self.inputfile)
@@ -111,9 +112,12 @@ class amaliaWindRoseRaw(object):
         w = likelihood/dx
         # Make sure it adds up to 1.
         # print 'integral of the pdf = ', np.sum(w*dx)
-        # Adjust to include the point at 360, which is the same as 0.
-        direction = np.append(direction, direction[-1]+dx)
-        w = np.append(w, w[0])
+        # Assume the weights correspond to the midpoint values of the directions
+        direction = direction + dx/2.
+        # Add the end point directions and endpoint weights
+        weight_end = (w[0]+w[-1])/2.
+        direction = np.concatenate([[0], direction, [360]])
+        w = np.concatenate([[weight_end], w, [weight_end]])
         f = interp1d(direction, w)
         return f
 
@@ -137,6 +141,53 @@ class amaliaWindRoseRaw(object):
 
     def str(self):
         return "Amalia windrose raw"
+
+    def bnd(self):
+        return self.lo, self.hi
+
+
+class Uniform(object):
+    """A Uniform distribution."""
+
+    def __init__(self):
+        self.lo = 0.0
+        self.hi = 360.0
+
+    def pdf(self, x):
+
+        lo = self.lo
+        hi = self.hi
+
+        pdf = []
+        x = x.flatten()  # In the constructor of the distribution it gets made a 2d array for some reason. But not for cdf
+        x = np.atleast_1d(x)  # makes it work if x is a scalar
+        for x_i in x:
+            if x_i < lo:
+                pdf.append(0.0)
+            elif x_i > hi:
+                pdf.append(0.0)
+            else:
+                pdf.append(1.0/(hi-lo))
+        return np.array(pdf)
+
+    def cdf(self, x):
+
+        lo = self.lo
+        hi = self.hi
+
+        cdf = []
+        x = np.atleast_1d(x)  # makes it work if x is a scalar
+        for x_i in x:
+            if x_i < lo:
+                cdf.append(0.0)
+            elif x_i > hi:
+                cdf.append(1.0)
+            else:
+                cdf.append((x_i - lo)/(hi-lo))
+        return np.array(cdf)
+
+    def str(self):
+        return "Uniform(%s, %s)" % (self.lo, self.hi)
 
     def bnd(self):
         return self.lo, self.hi
@@ -229,8 +280,8 @@ class TruncatedWeibull(object):
     def __init__(self):
         self.a = 1.8
         self.b = 12.552983
-        self.lo = 0.0
-        self.hi = 30.0
+        self.lo = 3.0  # 0.0
+        self.hi = 20.0  # 30.0
         self.k = self.set_truncation_value()
 
     def set_truncation_value(self):
@@ -328,23 +379,30 @@ def getWeibull():
     return weibull_dist
 
 
-def getWindRose():
+def getWindRose(distribution):
     """Gets a chaospy distribution,
         which is initialized with a distribution class I created
         and extended by it.
     """
 
-    amalia_wind_rose = amaliaWindRose()
-    # amalia_wind_rose = amaliaWindRoseRaw()  # Using this option needs updating
-    # amalia_wind_rose = amaliaWindRoseRaw01()
+    # Return the desired distribution (windRose)
+    if distribution == 'amaliaModified':
+        wind_rose = amaliaWindRose()
+    elif distribution == 'amaliaRaw':
+        wind_rose = amaliaWindRoseRaw()
+    elif distribution == 'Uniform':
+        wind_rose = Uniform()
+    else:
+        raise ValueError('unknown dirdistribution option "%s", valid options "amaliaModified", "amaliaRaw", "Uniform".' % distribution)
 
+    # wind_rose = amaliaWindRoseRaw01()  # This options needs updating
 
     # Set the necessary functions to construct a chaospy distribution
     windRose = cp.construct(
-        cdf=lambda self, x: amalia_wind_rose.cdf(x),
-        bnd=lambda self: amalia_wind_rose.bnd(),
-        pdf=lambda self, x: amalia_wind_rose.pdf(x),
-        str=lambda self: amalia_wind_rose.str()
+        cdf=lambda self, x: wind_rose.cdf(x),
+        bnd=lambda self: wind_rose.bnd(),
+        pdf=lambda self, x: wind_rose.pdf(x),
+        str=lambda self: wind_rose.str()
     )
 
     windrose_dist = windRose()
@@ -354,8 +412,8 @@ def getWindRose():
     # print windrose_dist.range()
 
     # Dynamically add method
-    if amalia_wind_rose.str() == 'Amalia windrose':
-        windrose_dist.get_zero_probability_region = amalia_wind_rose.get_zero_probability_region
+    if wind_rose.str() == 'Amalia windrose':
+        windrose_dist.get_zero_probability_region = wind_rose.get_zero_probability_region
 
 
     return windrose_dist

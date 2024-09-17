@@ -2,22 +2,23 @@
 import numpy as np
 # import matplotlib.pyplot as plt
 import json
+import shutil
 import argparse
 import time
 import chaospy as cp
 from openmdao.api import Problem
-from AEPGroups import AEPGroup
+from AEPGroups import AEPGroupMulti
 import distributions
 import windfarm_setup
 import approximate
 
 
-def run(method_dict, n):
+def run(method_dict, n_high, n_low):
     """
     method_dict = {}
     keys of method_dict:
         'method' = 'dakota', 'rect' or 'chaospy'  # 'chaospy needs updating
-        'wake_model = 'floris', 'jensen', 'gauss', 'larsen' # larsen is not working
+        'wake_model = 'floris', 'jensen', 'gauss', 'larsen' # larsen is not working  # a list containing 2 models
         'coeff_method' = 'quadrature', 'sparse_grid' or 'regression'
         'uncertain_var' = 'speed', 'direction' or 'direction_and_speed'
         'layout' = 'amalia', 'optimized', 'grid', 'random', 'test'
@@ -35,31 +36,61 @@ def run(method_dict, n):
     if method_dict['method'] == 'dakota' and method_dict['verbose']:
         approximate.generate_approx_file(method_dict['uncertain_var'])
 
+    # Create dakota files for the high and low fidelity
+    High = 0
+    Low = 1
+    dakota_file = method_dict['dakota_filename']
+    dakota_file_high = dakota_file + method_dict['file_extensions'][High]
+    dakota_file_low = dakota_file + method_dict['file_extensions'][Low]
+    shutil.copy(dakota_file, dakota_file_high)
+    shutil.copy(dakota_file, dakota_file_low)
+
     ### Set up the wind speeds and wind directions for the problem ###
 
-    points = windfarm_setup.getPoints(method_dict, n)
-    winddirections = points['winddirections']
-    windspeeds = points['windspeeds']
-    weights = points['weights']  # This might be None depending on the method.
-    N = winddirections.size  # actual number of samples
+    # The high fidelity points
+    method_dict['dakota_filename'] = dakota_file_high  # Update the input dakota file
+    points = windfarm_setup.getPoints(method_dict, n_high)
+    method_dict['dakota_filename'] = dakota_file  # Discard the Update of the input dakota file
+    winddirections_high = points['winddirections']
+    windspeeds_high = points['windspeeds']
+    weights_high = points['weights']  # This might be None depending on the method.
+    N_high = winddirections_high.size  # actual number of samples
 
-    print 'Locations at which power is evaluated'
+    print 'Locations at which the HIGH-fidelity model is evaluated for power'
     print '\twindspeed \t winddirection'
-    for i in range(N):
-        print i+1, '\t', '%.2f' % windspeeds[i], '\t', '%.2f' % winddirections[i]
+    for i in range(N_high):
+        print i+1, '\t', '%.2f' % windspeeds_high[i], '\t', '%.2f' % winddirections_high[i]
+
+    # The low fidelity points
+    method_dict['dakota_filename'] = dakota_file_low  # Update the input dakota file
+    points = windfarm_setup.getPoints(method_dict, n_low)
+    method_dict['dakota_filename'] = dakota_file  # Discard the Update of the input dakota file
+    winddirections_low = points['winddirections']
+    windspeeds_low = points['windspeeds']
+    weights_low = points['weights']  # This might be None depending on the method.
+    N_low = winddirections_low.size  # actual number of samples
+
+    print 'Locations at which the LOW-fidelity model is evaluated for power'
+    print '\twindspeed \t winddirection'
+    for i in range(N_low):
+        print i+1, '\t', '%.2f' % windspeeds_low[i], '\t', '%.2f' % winddirections_low[i]
 
     # Turbines layout
     turbineX, turbineY = windfarm_setup.getLayout(method_dict['layout'])
 
     # initialize problem
-    prob = Problem(AEPGroup(nTurbines=turbineX.size, nDirections=N, method_dict=method_dict))
+    prob = Problem(AEPGroupMulti(nTurbines=turbineX.size, nDirectionsHigh=N_high, nDirectionsLow=N_low, method_dict=method_dict))
 
     prob.setup(check=False)
 
     # assign initial values to variables
-    prob['windSpeeds'] = windspeeds
-    prob['windDirections'] = winddirections
-    prob['windWeights'] = weights
+    prob['windSpeedsHigh'] = windspeeds_high
+    prob['windDirectionsHigh'] = winddirections_high
+    prob['windWeightsHigh'] = weights_high
+
+    prob['windSpeedsLow'] = windspeeds_low
+    prob['windDirectionsLow'] = winddirections_low
+    prob['windWeightsLow'] = weights_low
 
     prob['turbineX'] = turbineX
     prob['turbineY'] = turbineY
@@ -102,9 +133,13 @@ def run(method_dict, n):
     factor = 1e6
     print 'mean = ', mean_data/factor, ' GWhrs'
     print 'std = ', std_data/factor, ' GWhrs'
-    power = prob['Powers']
+    power = prob['PowersCorr']
     print 'powers = ', power
 
+    # What I'm returning needs to be updated. The approximation file has to be updated as well for multifidelity.
+    N = N_high
+    winddirections = winddirections_high
+    windspeeds = windspeeds_high
     return mean_data/factor, std_data/factor, N, winddirections, windspeeds, power,\
            winddirections_approx, windspeeds_approx, power_approx
 
@@ -165,13 +200,14 @@ if __name__ == "__main__":
     method_dict = vars(args)  # Start a dictionary with the arguments specified in the command line
     method_dict['method']           = 'dakota'
     # select model: floris, jensen, gauss, larsen (larsen not working yet) TODO get larsen model working
-    method_dict['wake_model']       = 'floris'
+    method_dict['wake_model']       = ['floris', 'jensen']  # High, low
     method_dict['uncertain_var']    = 'direction'
     # method_dict['layout']         = 'optimized'  # Now this is specified in the command line
     # method_dict['dakota_filename']  = 'dakotageneral.in'
     method_dict['dakota_filename']  = 'dakotageneralPy.in'  # Interface with python support
     # To Do specify the number of points (directions or speeds) as an option as well.
     method_dict['coeff_method']     = 'quadrature'
+    method_dict['file_extensions']  = ['.high', '.low']  # These are used for correctly setting name for dakota file in multifidelity
 
     # Specify the distribution according to the uncertain variable
     if method_dict['uncertain_var'] == 'speed':
@@ -201,12 +237,13 @@ if __name__ == "__main__":
     tic = time.time()
     # Depending on the case n can represent number of quadrature points, sparse grid level, expansion order
     # n is roughly a surrogate for the number of samples
-    for n in range(5, 6, 1):
+    n_low = 6
+    for n_high in range(5, 6, 1):
 
         # Run the problem
         mean_data, std_data, N, winddirections, windspeeds, powers, \
         winddirections_approx, windspeeds_approx, powers_approx \
-            = run(method_dict, n)
+            = run(method_dict, n_high, n_low)
         mean.append(mean_data)
         std.append(std_data)
         samples.append(N)
@@ -240,6 +277,6 @@ if __name__ == "__main__":
         jsonfile.close()
 
     toc = time.time()
-    print 'Statistics Convergence took %.03f sec.' % (toc-tic)
+    print 'Statistics Convergence Multifidelity took %.03f sec.' % (toc-tic)
 
     # plot()

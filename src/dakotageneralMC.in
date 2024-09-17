@@ -3,12 +3,9 @@ environment
     tabular_data
 
 method
-    polynomial_chaos
-quadrature_order  5
-#sparse_grid_level  1
-#expansion_order  4
-#    collocation_ratio 1
-    normalized
+    sampling
+      sample_type random
+          samples = 10
     output verbose
 
 model
@@ -26,11 +23,8 @@ ordinates = 0.00511354250091 0.00501404577179 0.00473436314719 0.00434101316799 
 
 interface
     id_interface = 'UQ_INTERFACE'
-    fork
-        analysis_drivers = 'getPower.py'
-        parameters_file = 'params.in'
-        results_file = 'results.out'
-        file_save
+    python
+        analysis_drivers = 'getPowerPy:pythonInterface'
 
 responses
     num_response_functions = 1

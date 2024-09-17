@@ -199,37 +199,61 @@ def updateDakotaFile(method_dict, sample_number, x, f):
 
     # Update the number of points and the method block
 
-    # Remove expansion order options
-    expansion_order_options = ['collocation_points', 'expansion_samples', 'collocation_ratio']
-    lines = [line for line in lines if line.keys()[0] not in expansion_order_options]
+    keys = [line.keys()[0] for line in lines]
+    if 'polynomial_chaos' in keys:  # If we are running polynomial chaos, specified in the dakota input file.
 
-    # Write the desired method to select the coefficients
-    coeff_method_map = {'quadrature': 'quadrature_order', 'sparse_grid': 'sparse_grid_level',
-                        'regression': 'expansion_order'}
-    coeff_method = coeff_method_map[method_dict['coeff_method']]
-    coeff_methods = ['quadrature_order', 'sparse_grid_level', 'expansion_order']
-    for i, line in enumerate(lines):
-        if line.keys()[0] in coeff_methods:
-            if coeff_method == 'expansion_order':
-                lines[i] = {coeff_method: [str(sample_number-1)]}
-                lines.insert(i+1, {'collocation_ratio': ['1']})
-                # Here I could insert the other options for this case.
-                # lines.insert(i+1, {'collocation_points': [str(sample_number)]})
-                # lines.insert(i+1, {'expansion_samples': [str(sample_number)]})
-                # lines.insert(i+2, {'tensor_grid': []})
-                # if sample_number > 9:  # The 9 works at least for the 1d case # I fixed Cross_validation in dakota src so no need for the if statement.
-                #     lines.insert(i+2, {'cross_validation': []})
-                lines.insert(i+2, {'cross_validation': []})
-                # Use a random seed
+        # Remove expansion order options
+        expansion_order_options = ['collocation_points', 'expansion_samples', 'collocation_ratio']
+        lines = [line for line in lines if line.keys()[0] not in expansion_order_options]
+
+        # Write the desired method to select the coefficients
+        coeff_method_map = {'quadrature': 'quadrature_order', 'sparse_grid': 'sparse_grid_level',
+                            'regression': 'expansion_order'}
+        coeff_method = coeff_method_map[method_dict['coeff_method']]
+        coeff_methods = ['quadrature_order', 'sparse_grid_level', 'expansion_order']
+        for i, line in enumerate(lines):
+            if line.keys()[0] in coeff_methods:
+                if coeff_method == 'expansion_order':
+                    lines[i] = {coeff_method: [str(sample_number-1)]}
+                    lines.insert(i+1, {'collocation_ratio': ['1']})
+                    # lines.insert(i+2, {'least_absolute_shrinkage': []})
+                    # lines.insert(i+2, {'noise_tolerance': ['1000']})
+                    # lines.insert(i+2, {'l2_penalty': ['5']})
+                    # Here I could insert the other options for this case.
+                    # lines.insert(i+1, {'collocation_points': [str(sample_number)]})
+                    # lines.insert(i+1, {'expansion_samples': [str(sample_number)]})
+                    # lines.insert(i+2, {'tensor_grid': []})
+                    # if sample_number > 9:  # The 9 works at least for the 1d case # I fixed Cross_validation in dakota src so no need for the if statement.
+                    #     lines.insert(i+2, {'cross_validation': []})
+                    lines.insert(i+2, {'cross_validation': []})
+                    # lines.insert(i+3, {'noise_only': []})
+                    # Use a random seed
+                    # We want a consistent seed for when dakota gets called for the points and then with the actual powers
+                    # lines.insert(i+2, {'seed': ['15347']})
+                    if 'seed' not in keys:  # If we had already specified a seed don't overwrite it.
+                        seed = random.randrange(1, 100000000)  # As long as the seed is less the max int (2147483647)should be fine
+                        lines.insert(i+2, {'seed': [str(seed)]})
+                else:
+                    lines[i] = {coeff_method: [str(sample_number)]}
+                break
+        if method_dict['verbose']:
+            # Add file with the polynomial approximation
+            lines.insert(i+1, {'import_approx_points_file': ["'approximate_at.dat'"]})
+            lines.insert(i+2, {'annotated': []})
+            lines.insert(i+3, {'export_approx_points_file': ["'approximated.dat'"]})
+            lines.insert(i+4, {'annotated': []})
+
+    if 'sampling' in keys:  # If we are running Monte Carlo, specified in the dakota input file
+        for i, line in enumerate(lines):
+            if line.keys()[0] == 'samples':
+                lines[i]['samples'] = [str(sample_number)]
                 # We want a consistent seed for when dakota gets called for the points and then with the actual powers
-                # lines.insert(i+2, {'seed': ['15347']})
-                keys = [line.keys()[0] for line in lines]
+                # lines.insert(i+1, {'seed': ['15347']})
                 if 'seed' not in keys:  # If we had already specified a seed don't overwrite it.
                     seed = random.randrange(1, 100000000)  # As long as the seed is less the max int (2147483647)should be fine
-                    lines.insert(i+2, {'seed': [str(seed)]})
-            else:
-                lines[i] = {coeff_method: [str(sample_number)]}
-            break
+                    # In case you want to control the seed through the offset, useful in the sampling case
+                    # seed = method_dict['offset'] + 1  # a seed of 0 doesn't work, so make sure it is at least 1.
+                    lines.insert(i+1, {'seed': [str(seed)]})
 
     # Update the variables
 
